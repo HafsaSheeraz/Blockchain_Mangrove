@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 
+from app.core.request_timeout import run_with_request_timeout
 from app.models.gee_datasets import GeeDatasetsStatusResponse
 from app.models.gee_rh98 import GeeRh98SummaryResponse
 from app.models.gee_biomass import GeeBiomassSummaryResponse
@@ -21,7 +22,7 @@ router = APIRouter(prefix="/api/gee", tags=["Google Earth Engine"])
     summary="Get Google Earth Engine authentication status",
 )
 def gee_status() -> GeeStatusResponse:
-    return gee_service.get_status()
+    return run_with_request_timeout("Google Earth Engine status check", gee_service.get_status)
 
 
 @router.get(
@@ -31,7 +32,10 @@ def gee_status() -> GeeStatusResponse:
     summary="Get metadata-only Earth Engine dataset accessibility status",
 )
 def gee_datasets_status() -> GeeDatasetsStatusResponse:
-    return gee_dataset_check_service.get_datasets_status()
+    return run_with_request_timeout(
+        "Earth Engine dataset status check",
+        gee_dataset_check_service.get_datasets_status,
+    )
 
 
 @router.get(
@@ -40,7 +44,7 @@ def gee_datasets_status() -> GeeDatasetsStatusResponse:
     summary="Get live quality-filtered GEDI RH98 summary for whole AOI and mangrove mask",
 )
 def gee_rh98_summary() -> GeeRh98SummaryResponse:
-    return gee_rh98_summary_service.get_rh98_summary()
+    return run_with_request_timeout("Earth Engine RH98 summary", gee_rh98_summary_service.get_rh98_summary)
 
 
 @router.get(
@@ -49,7 +53,7 @@ def gee_rh98_summary() -> GeeRh98SummaryResponse:
     summary="Get live mangrove biomass and carbon-density statistics for the Indus Delta",
 )
 def gee_biomass_summary() -> GeeBiomassSummaryResponse:
-    return gee_biomass_service.get_biomass_summary()
+    return run_with_request_timeout("Earth Engine biomass summary", gee_biomass_service.get_biomass_summary)
 
 
 @router.get(
@@ -58,4 +62,7 @@ def gee_biomass_summary() -> GeeBiomassSummaryResponse:
     summary="Get live mangrove area, GEDI raster coverage and carbon stock totals",
 )
 def gee_carbon_stock_summary() -> GeeCarbonStockSummaryResponse:
-    return gee_carbon_stock_service.get_carbon_stock_summary()
+    return run_with_request_timeout(
+        "Earth Engine carbon stock summary",
+        gee_carbon_stock_service.get_carbon_stock_summary,
+    )

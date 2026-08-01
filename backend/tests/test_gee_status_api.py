@@ -8,6 +8,7 @@ from app.services import gee_service as gee_service_module
 def _reset_gee_singleton():
     gee_service_module.gee_service._initialized = False
     gee_service_module.gee_service._initialized_project_id = None
+    gee_service_module.gee_service._initialized_auth_fingerprint = None
 
 
 class _FakeNumber:
@@ -23,9 +24,9 @@ class _FakeEESuccess:
         self.initialize_calls = 0
         self.credentials_calls = []
 
-    def ServiceAccountCredentials(self, email, key_path):
-        self.credentials_calls.append((email, key_path))
-        return ("creds", email, key_path)
+    def ServiceAccountCredentials(self, email, key_path=None, key_data=None):
+        self.credentials_calls.append((email, key_path, key_data))
+        return ("creds", email, key_path, key_data)
 
     def Initialize(self, credentials=None, project=None):
         self.initialize_calls += 1
@@ -143,7 +144,38 @@ async def test_gee_status_successful_initialization(monkeypatch, tmp_path):
     body = response.json()
     assert body == {"enabled": True, "connected": True, "status": "connected", "project_id": "demo-project"}
     assert fake_ee.initialize_calls == 1
-    assert fake_ee.credentials_calls == [("svc@example.iam.gserviceaccount.com", str(key_file))]
+    assert fake_ee.credentials_calls == [("svc@example.iam.gserviceaccount.com", str(key_file), None)]
+
+
+@pytest.mark.asyncio
+async def test_gee_status_service_account_json_initialization(monkeypatch):
+    _reset_gee_singleton()
+    fake_ee = _FakeEESuccess()
+    monkeypatch.setattr(gee_service_module, "ee", fake_ee)
+
+    monkeypatch.setenv("GEE_ENABLED", "true")
+    monkeypatch.setenv("GEE_AUTH_MODE", "service_account_json")
+    monkeypatch.setenv("GEE_PROJECT_ID", "mangroves123")
+    monkeypatch.setenv("GEE_SERVICE_ACCOUNT_EMAIL", "svc@example.iam.gserviceaccount.com")
+    monkeypatch.setenv(
+        "GEE_SERVICE_ACCOUNT_JSON",
+        '{"type":"service_account","project_id":"mangroves123","private_key_id":"abc","private_key":"-----BEGIN PRIVATE KEY-----\\\\nsecret\\\\n-----END PRIVATE KEY-----\\\\n","client_email":"svc@example.iam.gserviceaccount.com"}',
+    )
+    monkeypatch.delenv("GEE_PRIVATE_KEY_FILE", raising=False)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/api/gee/status")
+
+    body = response.json()
+    assert body == {"enabled": True, "connected": True, "status": "connected", "project_id": "mangroves123"}
+    assert fake_ee.initialize_calls == 1
+    assert fake_ee.credentials_calls == [
+        (
+            "svc@example.iam.gserviceaccount.com",
+            None,
+            '{"type":"service_account","project_id":"mangroves123","private_key_id":"abc","private_key":"-----BEGIN PRIVATE KEY-----\\\\nsecret\\\\n-----END PRIVATE KEY-----\\\\n","client_email":"svc@example.iam.gserviceaccount.com"}',
+        )
+    ]
 
 
 @pytest.mark.asyncio
@@ -190,6 +222,49 @@ async def test_gee_status_adc_missing_project_id(monkeypatch):
     assert body["status"] == "missing_configuration"
     assert "GEE_PROJECT_ID" in body["message"]
     assert fake_google_auth.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_gee_status_service_account_json_missing_secret(monkeypatch):
+    _reset_gee_singleton()
+    fake_ee = _FakeEESuccess()
+    monkeypatch.setattr(gee_service_module, "ee", fake_ee)
+
+    monkeypatch.setenv("GEE_ENABLED", "true")
+    monkeypatch.setenv("GEE_AUTH_MODE", "service_account_json")
+    monkeypatch.setenv("GEE_PROJECT_ID", "mangroves123")
+    monkeypatch.setenv("GEE_SERVICE_ACCOUNT_EMAIL", "svc@example.iam.gserviceaccount.com")
+    monkeypatch.delenv("GEE_SERVICE_ACCOUNT_JSON", raising=False)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/api/gee/status")
+
+    body = response.json()
+    assert body["status"] == "missing_configuration"
+    assert "GEE_SERVICE_ACCOUNT_JSON" in body["message"]
+    assert fake_ee.initialize_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_gee_status_service_account_json_invalid_secret_is_sanitized(monkeypatch):
+    _reset_gee_singleton()
+    fake_ee = _FakeEESuccess()
+    monkeypatch.setattr(gee_service_module, "ee", fake_ee)
+
+    monkeypatch.setenv("GEE_ENABLED", "true")
+    monkeypatch.setenv("GEE_AUTH_MODE", "service_account_json")
+    monkeypatch.setenv("GEE_PROJECT_ID", "mangroves123")
+    monkeypatch.setenv("GEE_SERVICE_ACCOUNT_EMAIL", "svc@example.iam.gserviceaccount.com")
+    monkeypatch.setenv("GEE_SERVICE_ACCOUNT_JSON", '{"private_key":"secret"')
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/api/gee/status")
+
+    body = response.json()
+    assert body["status"] == "invalid_configuration"
+    assert body["message"] == "Configured GEE service-account JSON is invalid."
+    assert "secret" not in str(body)
+    assert fake_ee.initialize_calls == 0
 
 
 @pytest.mark.asyncio

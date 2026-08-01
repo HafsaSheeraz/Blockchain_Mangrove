@@ -15,7 +15,7 @@ function ensureApiBaseUrl() {
   const baseUrl = import.meta.env.VITE_API_BASE_URL
   if (!baseUrl || !baseUrl.trim()) {
     throw new ApiError(
-      'Frontend API base URL is not configured. Set VITE_API_BASE_URL in frontend/.env.',
+      'Frontend API base URL is not configured. Set VITE_API_BASE_URL in frontend/.env or in the frontend deployment environment.',
       { code: 'config_error' },
     )
   }

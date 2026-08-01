@@ -152,6 +152,7 @@ Container properties:
 - `GEE_PROJECT_ID`
 - `GEE_SERVICE_ACCOUNT_EMAIL` (required for `service_account_key`; optional metadata in `adc`)
 - `GEE_PRIVATE_KEY_FILE` (required for `service_account_key`; unset in `adc`)
+- `GEE_SERVICE_ACCOUNT_JSON` (required for `service_account_json`; unset in `adc`)
 
 Recommended production values should be supplied through Cloud Run environment
 variables only; do not ship a populated `.env` file.
@@ -264,6 +265,79 @@ npm run build
 
 Serve `frontend/dist/` from a static host and rewrite SPA routes such as
 `/analysis` to `index.html`.
+
+## Vercel two-project deployment
+
+### Project layout
+
+Use two separate Vercel projects from the same GitHub repository:
+
+1. Backend project
+   - Root directory: `backend`
+   - Runtime: Vercel Python functions
+   - Entrypoint: [backend/api/index.py](/D:/MangroveCarbonApp/backend/api/index.py)
+   - Vercel config: [backend/vercel.json](/D:/MangroveCarbonApp/backend/vercel.json)
+
+2. Frontend project
+   - Root directory: `frontend`
+   - Framework: Vite / React
+   - Vercel config: [frontend/vercel.json](/D:/MangroveCarbonApp/frontend/vercel.json)
+
+### Backend Vercel project settings
+
+- Framework preset: `Other`
+- Root directory: `backend`
+- Build command: leave default for Python runtime
+- Output directory: none
+- Install command: `pip install -r requirements.txt`
+- Production branch: your chosen default branch
+
+Backend environment variables:
+
+- `APP_ENV=production`
+- `GEE_ENABLED=true`
+- `GEE_AUTH_MODE=service_account_json`
+- `GEE_PROJECT_ID=mangroves123`
+- `GEE_SERVICE_ACCOUNT_EMAIL`
+- `GEE_SERVICE_ACCOUNT_JSON`
+- `LOG_LEVEL=INFO`
+- `REQUEST_TIMEOUT_SECONDS=290`
+- `MAP_LAYER_CACHE_TTL_SECONDS=900`
+- `CORS_ORIGINS=https://<frontend-vercel-domain>`
+
+Backend serverless notes:
+
+- `backend/vercel.json` routes all requests to the shared FastAPI app
+- maximum function duration is set to `300` seconds
+- application timeout should remain below the Hobby limit; `290` seconds is the
+  recommended ceiling
+- if an EE request exceeds that budget, the API should return a timeout error
+- in-memory caches are best-effort only and must not be treated as persistent
+
+Vercel Hobby limitation:
+
+- any Earth Engine operation that cannot complete within the platform function
+  limit will fail; this deployment does not precompute, fake, or hardcode
+  scientific results
+
+### Frontend Vercel project settings
+
+- Framework preset: `Vite`
+- Root directory: `frontend`
+- Build command: `npm run build`
+- Output directory: `dist`
+
+Frontend environment variables:
+
+- `VITE_API_BASE_URL=https://<backend-vercel-domain>`
+
+Frontend routing notes:
+
+- only `VITE_API_BASE_URL` belongs in the browser
+- do not expose `GEE_SERVICE_ACCOUNT_JSON`, `GEE_SERVICE_ACCOUNT_EMAIL`, or any
+  other backend secret in frontend variables
+- [frontend/vercel.json](/D:/MangroveCarbonApp/frontend/vercel.json) provides
+  SPA refresh rewrites for `/` and `/analysis`
 
 ## React Router advisory risk acceptance
 

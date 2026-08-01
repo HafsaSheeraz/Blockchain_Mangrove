@@ -3,6 +3,7 @@ from typing import Union
 from fastapi import APIRouter, HTTPException, Path
 from fastapi.responses import Response
 
+from app.core.request_timeout import run_with_request_timeout
 from app.models.analysis import (
     AnalyzeRequest,
     AnalyzeResponse,
@@ -31,7 +32,7 @@ def analyze(payload: AnalyzeRequest) -> Union[AnalyzeResponse, CustomAoiAnalyzeR
 
     Returns mode='demonstration' or mode='live_earth_engine_custom_aoi' accordingly.
     """
-    return run_analysis(payload)
+    return run_with_request_timeout("AOI analysis", lambda: run_analysis(payload))
 
 
 @router.post(
@@ -40,7 +41,7 @@ def analyze(payload: AnalyzeRequest) -> Union[AnalyzeResponse, CustomAoiAnalyzeR
     summary="Build Earth Engine AOI map-layer descriptors",
 )
 def analyze_map_layers(payload: AnalyzeRequest) -> MapLayersResponse:
-    return run_map_layers_analysis(payload)
+    return run_with_request_timeout("AOI map-layer generation", lambda: run_map_layers_analysis(payload))
 
 
 @router.post(
@@ -74,7 +75,10 @@ def export_analysis(
             detail="Export requires aoi_geometry (GeoJSON Polygon) in the request body.",
         )
 
-    result: CustomAoiAnalyzeResponse = run_custom_aoi_analysis(payload)
+    result: CustomAoiAnalyzeResponse = run_with_request_timeout(
+        "AOI export preparation",
+        lambda: run_custom_aoi_analysis(payload),
+    )
     processing_version = _get_gee_service().get_processing_version_fingerprint()
     document = export_service.build_export_document(
         result,

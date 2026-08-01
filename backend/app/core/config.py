@@ -8,7 +8,7 @@ from dotenv import dotenv_values
 LOCAL_CORS_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"]
 DEFAULT_TILE_HOSTS = ["earthengine.googleapis.com"]
 DEFAULT_GEE_PRIVATE_KEY_FILE = "secrets/gee-service-account.json"
-SUPPORTED_GEE_AUTH_MODES = {"service_account_key", "adc"}
+SUPPORTED_GEE_AUTH_MODES = {"service_account_key", "service_account_json", "adc"}
 
 
 def _parse_bool(value: str | None, default: bool = False) -> bool:
@@ -79,6 +79,7 @@ class Settings:
     gee_project_id: str
     gee_service_account_email: str
     gee_private_key_file: str
+    gee_service_account_json: str
     backend_dir: Path
 
     @property
@@ -104,7 +105,7 @@ class Settings:
         if self.gee_enabled:
             if self.gee_auth_mode not in SUPPORTED_GEE_AUTH_MODES:
                 issues.append(
-                    "GEE_AUTH_MODE must be one of: service_account_key, adc."
+                    "GEE_AUTH_MODE must be one of: service_account_key, service_account_json, adc."
                 )
                 return issues
 
@@ -130,6 +131,24 @@ class Settings:
                         )
                     elif not self.resolved_key_path().is_file():
                         issues.append("Configured GEE private key file was not found.")
+            elif self.gee_auth_mode == "service_account_json":
+                if not self.gee_service_account_email:
+                    missing.append("GEE_SERVICE_ACCOUNT_EMAIL")
+                if not self.gee_service_account_json:
+                    missing.append("GEE_SERVICE_ACCOUNT_JSON")
+
+                if missing:
+                    issues.append(f"Missing required GEE configuration: {', '.join(missing)}.")
+                else:
+                    try:
+                        import json
+
+                        parsed = json.loads(self.gee_service_account_json)
+                    except Exception:
+                        issues.append("GEE_SERVICE_ACCOUNT_JSON must contain valid service-account JSON.")
+                    else:
+                        if not isinstance(parsed, dict):
+                            issues.append("GEE_SERVICE_ACCOUNT_JSON must contain valid service-account JSON.")
             elif missing:
                 issues.append(f"Missing required GEE configuration: {', '.join(missing)}.")
 
@@ -177,6 +196,7 @@ def build_settings() -> Settings:
         gee_project_id=_get_env("GEE_PROJECT_ID", env_values, "").strip(),
         gee_service_account_email=_get_env("GEE_SERVICE_ACCOUNT_EMAIL", env_values, "").strip(),
         gee_private_key_file=_get_env("GEE_PRIVATE_KEY_FILE", env_values, DEFAULT_GEE_PRIVATE_KEY_FILE).strip(),
+        gee_service_account_json=_get_env("GEE_SERVICE_ACCOUNT_JSON", env_values, "").strip(),
         backend_dir=backend_dir,
     )
 

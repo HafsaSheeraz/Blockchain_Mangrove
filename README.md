@@ -251,7 +251,16 @@ Security notes:
 Authentication modes:
 
 - Local Windows development: `GEE_AUTH_MODE=service_account_key`
+- Vercel production: `GEE_AUTH_MODE=service_account_json`
 - Cloud Run production: `GEE_AUTH_MODE=adc`
+
+Vercel serverless notes:
+
+- Backend secrets stay only in the backend Vercel project
+- Set `GEE_SERVICE_ACCOUNT_JSON` to the complete service-account JSON text
+- Do not commit, upload, or bundle the JSON file in the repository
+- Set `REQUEST_TIMEOUT_SECONDS` below Vercel Hobby's 300-second function limit
+- Set frontend `VITE_API_BASE_URL` to the backend Vercel project URL
 
 Cloud Run ADC notes:
 

@@ -34,6 +34,7 @@ def _settings(**overrides):
         "gee_project_id": "mangroves123",
         "gee_service_account_email": "mangrove-carbon-backend@mangroves123.iam.gserviceaccount.com",
         "gee_private_key_file": "gee-service-account.json",
+        "gee_service_account_json": "",
         "backend_dir": backend_dir,
     }
     base.update(overrides)
@@ -127,6 +128,39 @@ async def test_ready_endpoint_reports_adc_mode_ready_without_key_file(monkeypatc
     assert response.status_code == 200
     assert response.json()["ready"] is True
     assert response.json()["issues"] == []
+
+
+@pytest.mark.asyncio
+async def test_ready_endpoint_reports_service_account_json_mode_ready(monkeypatch):
+    settings = _settings(
+        gee_auth_mode="service_account_json",
+        gee_private_key_file="",
+        gee_service_account_json='{"type":"service_account","client_email":"svc@example.com"}',
+    )
+    monkeypatch.setattr(gee_service_module.gee_service, "get_connection_context", lambda: (_ for _ in ()).throw(AssertionError("Earth Engine should not be checked")))
+
+    async with _ready_client(settings) as client:
+        response = await client.get("/ready")
+
+    assert response.status_code == 200
+    assert response.json()["ready"] is True
+    assert response.json()["issues"] == []
+
+
+@pytest.mark.asyncio
+async def test_ready_endpoint_reports_invalid_service_account_json():
+    settings = _settings(
+        gee_auth_mode="service_account_json",
+        gee_private_key_file="",
+        gee_service_account_json='{"type":"service_account"',
+    )
+
+    async with _ready_client(settings) as client:
+        response = await client.get("/ready")
+
+    body = response.json()
+    assert body["ready"] is False
+    assert any("GEE_SERVICE_ACCOUNT_JSON" in issue for issue in body["issues"])
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 from pathlib import Path
+import hashlib
+import json
 
 from app.core import config as config_module
 
@@ -23,6 +25,7 @@ class GeeSettings:
     service_account_email: str
     private_key_file: str
     backend_dir: Path
+    service_account_json: str = ""
     auth_mode: str = "service_account_key"
 
     def resolved_key_path(self) -> Path:
@@ -52,6 +55,7 @@ def load_gee_settings() -> GeeSettings:
         service_account_email=app_settings.gee_service_account_email,
         private_key_file=app_settings.gee_private_key_file,
         backend_dir=app_settings.backend_dir,
+        service_account_json=app_settings.gee_service_account_json,
     )
 
 
@@ -64,10 +68,25 @@ class GeeService:
     def _settings_fingerprint(self, settings: GeeSettings) -> str:
         if settings.auth_mode == "adc":
             return f"adc:{settings.project_id}"
+        if settings.auth_mode == "service_account_json":
+            secret_hash = hashlib.sha256(settings.service_account_json.encode("utf-8")).hexdigest()
+            return (
+                f"service_account_json:{settings.project_id}:{settings.service_account_email}:"
+                f"{secret_hash}"
+            )
         return (
             f"service_account_key:{settings.project_id}:{settings.service_account_email}:"
             f"{settings.resolved_key_path()}"
         )
+
+    def _validated_service_account_json(self, settings: GeeSettings) -> str:
+        try:
+            parsed = json.loads(settings.service_account_json)
+        except Exception as error:
+            raise ValueError("Configured GEE service-account JSON is invalid.") from error
+        if not isinstance(parsed, dict):
+            raise ValueError("Configured GEE service-account JSON is invalid.")
+        return settings.service_account_json
 
     def _ensure_initialized(self, settings: GeeSettings) -> None:
         fingerprint = self._settings_fingerprint(settings)
@@ -80,6 +99,11 @@ class GeeService:
 
         if settings.auth_mode == "adc":
             credentials, _detected_project = google_auth.default()
+        elif settings.auth_mode == "service_account_json":
+            credentials = ee.ServiceAccountCredentials(
+                settings.service_account_email,
+                key_data=self._validated_service_account_json(settings),
+            )
         elif settings.auth_mode == "service_account_key":
             credentials = ee.ServiceAccountCredentials(
                 settings.service_account_email,
@@ -101,6 +125,8 @@ class GeeService:
     def _authentication_failure_message(self, settings: GeeSettings) -> str:
         if settings.auth_mode == "adc":
             return "Google Earth Engine authentication failed. Verify ADC configuration and runtime identity."
+        if settings.auth_mode == "service_account_json":
+            return "Google Earth Engine authentication failed. Verify service-account JSON configuration and credentials."
         return "Google Earth Engine authentication failed. Verify configuration and credentials."
 
     def get_connection_context(self) -> GeeConnectionContext:
@@ -121,7 +147,7 @@ class GeeService:
                 enabled=True,
                 connected=False,
                 status="invalid_configuration",
-                message="GEE_AUTH_MODE must be one of: service_account_key, adc.",
+                message="GEE_AUTH_MODE must be one of: service_account_key, service_account_json, adc.",
                 project_id=None,
                 settings=settings,
             )
@@ -135,6 +161,11 @@ class GeeService:
                 missing_fields.append("GEE_SERVICE_ACCOUNT_EMAIL")
             if not settings.private_key_file:
                 missing_fields.append("GEE_PRIVATE_KEY_FILE")
+        elif settings.auth_mode == "service_account_json":
+            if not settings.service_account_email:
+                missing_fields.append("GEE_SERVICE_ACCOUNT_EMAIL")
+            if not settings.service_account_json:
+                missing_fields.append("GEE_SERVICE_ACCOUNT_JSON")
 
         if missing_fields:
             return GeeConnectionContext(
@@ -155,6 +186,19 @@ class GeeService:
                 project_id=None,
                 settings=settings,
             )
+
+        if settings.auth_mode == "service_account_json":
+            try:
+                self._validated_service_account_json(settings)
+            except ValueError:
+                return GeeConnectionContext(
+                    enabled=True,
+                    connected=False,
+                    status="invalid_configuration",
+                    message="Configured GEE service-account JSON is invalid.",
+                    project_id=None,
+                    settings=settings,
+                )
 
         if settings.auth_mode == "adc" and google_auth is None:
             return GeeConnectionContext(

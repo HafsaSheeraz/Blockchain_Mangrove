@@ -225,6 +225,39 @@ def test_same_request_reuses_custom_cache_and_never_returns_baseline_cache(monke
     assert calls["count"] == 1
 
 
+def test_serverless_cache_miss_still_returns_correct_result(monkeypatch):
+    service = GeeCarbonStockService()
+    polygon = _indus_polygon()
+    calls = {"count": 0}
+
+    monkeypatch.setattr(
+        stock_module.gee_service_module,
+        "gee_service",
+        SimpleNamespace(get_connection_context=lambda: SimpleNamespace(enabled=True, connected=True)),
+    )
+    monkeypatch.setattr(service, "_geojson_polygon_to_ee_geometry", lambda _: {"geometry": "ok"})
+
+    def fake_run(*args, **kwargs):
+        calls["count"] += 1
+        return _CarbonStockResult(response=_valid_results_dict(), is_success=True)
+
+    monkeypatch.setattr(service, "_run_live_summary_parameterized", fake_run)
+
+    first = service.run_live_summary_for_custom_aoi(
+        "custom", "Custom AOI", polygon, "2020-01-01", "2020-04-01"
+    )
+    service._custom_aoi_cache.clear()
+    second = service.run_live_summary_for_custom_aoi(
+        "custom", "Custom AOI", deepcopy(polygon), "2020-01-01", "2020-04-01"
+    )
+
+    assert first.results is not None
+    assert second.results is not None
+    assert first.results.direct_sampled_carbon_mg_c == pytest.approx(55.0)
+    assert second.results.direct_sampled_carbon_mg_c == pytest.approx(55.0)
+    assert calls["count"] == 2
+
+
 def test_same_geometry_with_different_study_area_ids_keeps_correct_labels(monkeypatch):
     service = GeeCarbonStockService()
     polygon = _indus_polygon()
@@ -700,4 +733,3 @@ def test_custom_aoi_study_area_label_does_not_leak_indus_name(monkeypatch):
     assert response.study_area.id == "custom"
     assert "Indus" not in response.study_area.name
     assert "Pakistan" not in response.study_area.name
-
