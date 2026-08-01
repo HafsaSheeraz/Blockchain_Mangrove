@@ -45,6 +45,7 @@ VITE_API_BASE_URL=http://127.0.0.1:8001
 - `MAX_AOI_DATE_RANGE_DAYS`
 - `MAP_TILE_ALLOWED_HOSTS`
 - `GEE_ENABLED`
+- `GEE_AUTH_MODE`
 - `GEE_PROJECT_ID`
 - `GEE_SERVICE_ACCOUNT_EMAIL`
 - `GEE_PRIVATE_KEY_FILE`
@@ -90,7 +91,7 @@ Validated backend characteristics:
 
 Current deployment-sensitive constraints:
 
-- Earth Engine authentication currently expects a service-account JSON key path
+- Earth Engine authentication is mode-dependent (`service_account_key` or `adc`)
 - `REQUEST_TIMEOUT_SECONDS` is configured but is not yet enforced as an
   application-level timeout around Earth Engine calls
 - Custom AOI result caching and map-layer descriptor caching are in-memory only
@@ -102,25 +103,19 @@ Preferred design:
 
 1. Attach a dedicated Cloud Run runtime service account with only the minimum
    permissions needed for:
-   - reading the Earth Engine credential secret from Secret Manager
    - writing Cloud Logging entries
-2. Mount the Earth Engine service-account JSON from Secret Manager as a file
-   inside the container, rather than baking credentials into the image
-3. Set `GEE_PRIVATE_KEY_FILE` to the mounted path and keep
-   `GEE_SERVICE_ACCOUNT_EMAIL` and `GEE_PROJECT_ID` in environment variables
+2. Configure `GEE_AUTH_MODE=adc`
+3. Set `GEE_PROJECT_ID` to the deployed Google Cloud project
+4. Do not mount or upload a service-account JSON file
 
-This avoids embedding credentials in the image and works with the current code
-without changing scientific processing.
+This uses Application Default Credentials from the attached Cloud Run
+user-managed service account and avoids embedding credentials in the image.
 
-Smallest future secure adaptation (proposed, not implemented here):
+Local Windows development should continue using:
 
-- add an Application Default Credentials fallback in the Earth Engine
-  initialization path so Cloud Run could use its attached runtime identity
-  directly when the service account is Earth Engine-enabled
-- keep the current explicit key-file path as a backward-compatible fallback
-
-Until that adaptation is implemented, Secret Manager file mount is the safest
-production fit for the current codebase.
+- `GEE_AUTH_MODE=service_account_key`
+- `GEE_SERVICE_ACCOUNT_EMAIL` (required for `service_account_key`; optional metadata in `adc`)
+- `GEE_PRIVATE_KEY_FILE` (required for `service_account_key`; unset in `adc`)
 
 ### Backend container files
 
@@ -135,6 +130,7 @@ Container properties:
 - does not copy `.env` files or credential material
 - uses Cloud Run's `PORT`
 - runs `uvicorn app.main:app` without `--reload`
+- does not set `GOOGLE_APPLICATION_CREDENTIALS`
 
 ### Required production environment variables
 
@@ -152,12 +148,27 @@ Container properties:
 - `MAP_LAYER_CACHE_TTL_SECONDS`
 - `MAP_TILE_ALLOWED_HOSTS`
 - `GEE_ENABLED`
+- `GEE_AUTH_MODE`
 - `GEE_PROJECT_ID`
-- `GEE_SERVICE_ACCOUNT_EMAIL`
-- `GEE_PRIVATE_KEY_FILE`
+- `GEE_SERVICE_ACCOUNT_EMAIL` (required for `service_account_key`; optional metadata in `adc`)
+- `GEE_PRIVATE_KEY_FILE` (required for `service_account_key`; unset in `adc`)
 
 Recommended production values should be supplied through Cloud Run environment
-variables and Secret Manager mounts only; do not ship a populated `.env` file.
+variables only; do not ship a populated `.env` file.
+
+Cloud Run production:
+
+- `GEE_AUTH_MODE=adc`
+- `GEE_PROJECT_ID=<your-project>`
+- optional `GEE_SERVICE_ACCOUNT_EMAIL=<expected-runtime-identity>`
+- do not set `GEE_PRIVATE_KEY_FILE`
+
+Local development:
+
+- `GEE_AUTH_MODE=service_account_key`
+- `GEE_PROJECT_ID=<your-project>`
+- `GEE_SERVICE_ACCOUNT_EMAIL=<service-account-email>`
+- `GEE_PRIVATE_KEY_FILE=secrets/gee-service-account.json`
 
 ### Recommended Cloud Run service settings
 
@@ -191,15 +202,16 @@ Operational caveats:
 - [ ] Build backend container from [backend/Dockerfile](/D:/MangroveCarbonApp/backend/Dockerfile)
 - [ ] Confirm no secrets are copied into the image
 - [ ] Create or identify a dedicated Cloud Run runtime service account
-- [ ] Grant that runtime service account access to the Earth Engine secret in
-      Secret Manager
-- [ ] Mount the Earth Engine secret as a file inside the container
+- [ ] Assign that runtime service account to the Cloud Run service
 - [ ] Set `APP_ENV=production`
 - [ ] Set explicit `CORS_ORIGINS`
 - [ ] Set `GEE_ENABLED=true`
+- [ ] Set `GEE_AUTH_MODE=adc`
 - [ ] Set `GEE_PROJECT_ID`
-- [ ] Set `GEE_SERVICE_ACCOUNT_EMAIL`
-- [ ] Set `GEE_PRIVATE_KEY_FILE` to the mounted secret path
+- [ ] Confirm the runtime service account is registered/authorized for Earth Engine
+- [ ] Confirm the runtime service account can access project `mangroves123`
+- [ ] Confirm the runtime service account can access required private Earth Engine assets
+- [ ] Confirm the runtime service account has the project roles required by the existing pipeline
 - [ ] Set AOI and timeout limits explicitly
 - [ ] Deploy with `--timeout=900 --concurrency=1`
 - [ ] Verify `GET /health`
@@ -232,8 +244,7 @@ gcloud run deploy mangrove-carbon-backend \
   --concurrency 1 \
   --min-instances 0 \
   --max-instances 3 \
-  --set-env-vars APP_ENV=production,CORS_ORIGINS=https://YOUR_FRONTEND_HOST,LOG_LEVEL=info,REQUEST_TIMEOUT_SECONDS=120,MAX_REQUEST_BODY_BYTES=1000000,MAX_AOI_TOTAL_VERTICES=5000,MAX_AOI_INTERIOR_RINGS=20,MAX_AOI_RING_VERTICES=2000,MAX_AOI_SERIALIZED_BYTES=200000,MAX_AOI_DATE_RANGE_DAYS=1461,MAP_LAYER_CACHE_TTL_SECONDS=1200,MAP_TILE_ALLOWED_HOSTS=earthengine.googleapis.com,GEE_ENABLED=true,GEE_PROJECT_ID=YOUR_GCP_PROJECT,GEE_SERVICE_ACCOUNT_EMAIL=YOUR_EE_SERVICE_ACCOUNT@YOUR_GCP_PROJECT.iam.gserviceaccount.com,GEE_PRIVATE_KEY_FILE=/app/secrets/gee-service-account.json \
-  --update-secrets=/app/secrets/gee-service-account.json=EARTH_ENGINE_SERVICE_ACCOUNT_JSON:latest
+  --set-env-vars APP_ENV=production,CORS_ORIGINS=https://YOUR_FRONTEND_HOST,LOG_LEVEL=info,REQUEST_TIMEOUT_SECONDS=120,MAX_REQUEST_BODY_BYTES=1000000,MAX_AOI_TOTAL_VERTICES=5000,MAX_AOI_INTERIOR_RINGS=20,MAX_AOI_RING_VERTICES=2000,MAX_AOI_SERIALIZED_BYTES=200000,MAX_AOI_DATE_RANGE_DAYS=1461,MAP_LAYER_CACHE_TTL_SECONDS=1200,MAP_TILE_ALLOWED_HOSTS=earthengine.googleapis.com,GEE_ENABLED=true,GEE_AUTH_MODE=adc,GEE_PROJECT_ID=mangroves123
 ```
 
 Post-deploy smoke checks:

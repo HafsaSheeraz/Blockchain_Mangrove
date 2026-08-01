@@ -237,6 +237,7 @@ Set these values in `backend/.env`:
 
 ```env
 GEE_ENABLED=false
+GEE_AUTH_MODE=service_account_key
 GEE_PROJECT_ID=
 GEE_SERVICE_ACCOUNT_EMAIL=
 GEE_PRIVATE_KEY_FILE=secrets/gee-service-account.json
@@ -246,6 +247,21 @@ Security notes:
 - Keep service-account key files under `backend/secrets/`
 - Never commit key files or `.env` to source control
 - The API never returns private key content or full secret file paths
+
+Authentication modes:
+
+- Local Windows development: `GEE_AUTH_MODE=service_account_key`
+- Cloud Run production: `GEE_AUTH_MODE=adc`
+
+Cloud Run ADC notes:
+
+- Assign a user-managed service account to the Cloud Run service
+- Ensure that runtime service account is registered/authorized for Earth Engine
+- Ensure it can access project `mangroves123`
+- Ensure it can access the required private Earth Engine assets
+- Ensure it has the project roles required by the existing pipeline
+- Do not upload, mount, or bake a service-account JSON file into the image when
+  `GEE_AUTH_MODE=adc`
 
 ### Test Earth Engine auth status from API
 

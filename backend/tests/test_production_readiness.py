@@ -30,6 +30,7 @@ def _settings(**overrides):
         "max_request_body_bytes": 1000000,
         "map_tile_allowed_hosts": ["earthengine.googleapis.com"],
         "gee_enabled": True,
+        "gee_auth_mode": "service_account_key",
         "gee_project_id": "mangroves123",
         "gee_service_account_email": "mangrove-carbon-backend@mangroves123.iam.gserviceaccount.com",
         "gee_private_key_file": "gee-service-account.json",
@@ -49,6 +50,7 @@ def _ready_client(settings):
 
 
 def test_build_settings_normalizes_origin_lists(monkeypatch):
+    monkeypatch.setattr(config_module, "dotenv_values", lambda path: {})
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("CORS_ORIGINS", " https://app.example/ , https://api.example ")
     monkeypatch.setenv("MAP_TILE_ALLOWED_HOSTS", "earthengine.googleapis.com, earthengine-alt.googleapis.com")
@@ -60,12 +62,33 @@ def test_build_settings_normalizes_origin_lists(monkeypatch):
 
 
 def test_build_settings_uses_empty_cors_allowlist_in_production_when_unset(monkeypatch):
+    monkeypatch.setattr(config_module, "dotenv_values", lambda path: {})
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.delenv("CORS_ORIGINS", raising=False)
 
     settings = config_module.build_settings()
 
     assert settings.cors_origins == []
+
+
+def test_build_settings_defaults_to_adc_in_production(monkeypatch):
+    monkeypatch.setattr(config_module, "dotenv_values", lambda path: {})
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.delenv("GEE_AUTH_MODE", raising=False)
+
+    settings = config_module.build_settings()
+
+    assert settings.gee_auth_mode == "adc"
+
+
+def test_build_settings_defaults_to_service_account_key_in_development(monkeypatch):
+    monkeypatch.setattr(config_module, "dotenv_values", lambda path: {})
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.delenv("GEE_AUTH_MODE", raising=False)
+
+    settings = config_module.build_settings()
+
+    assert settings.gee_auth_mode == "service_account_key"
 
 
 @pytest.mark.asyncio
@@ -87,6 +110,41 @@ async def test_ready_endpoint_reports_ready_without_earth_engine_check(monkeypat
         "cors_origins_configured": True,
         "issues": [],
     }
+
+
+@pytest.mark.asyncio
+async def test_ready_endpoint_reports_adc_mode_ready_without_key_file(monkeypatch):
+    settings = _settings(
+        gee_auth_mode="adc",
+        gee_service_account_email="",
+        gee_private_key_file="",
+    )
+    monkeypatch.setattr(gee_service_module.gee_service, "get_connection_context", lambda: (_ for _ in ()).throw(AssertionError("Earth Engine should not be checked")))
+
+    async with _ready_client(settings) as client:
+        response = await client.get("/ready")
+
+    assert response.status_code == 200
+    assert response.json()["ready"] is True
+    assert response.json()["issues"] == []
+
+
+@pytest.mark.asyncio
+async def test_ready_endpoint_reports_missing_adc_project_id():
+    settings = _settings(
+        gee_auth_mode="adc",
+        gee_project_id="",
+        gee_service_account_email="",
+        gee_private_key_file="",
+    )
+
+    async with _ready_client(settings) as client:
+        response = await client.get("/ready")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ready"] is False
+    assert any("GEE_PROJECT_ID" in issue for issue in body["issues"])
 
 
 @pytest.mark.asyncio

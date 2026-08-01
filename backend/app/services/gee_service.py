@@ -1,8 +1,7 @@
 from dataclasses import dataclass
-import os
 from pathlib import Path
 
-from dotenv import dotenv_values
+from app.core import config as config_module
 
 from app.models.gee import GeeStatusResponse
 
@@ -11,12 +10,10 @@ try:
 except ImportError:  # pragma: no cover
     ee = None
 
-
-def _parse_bool(value: str | None, default: bool = False) -> bool:
-    if value is None:
-        return default
-    normalized = value.strip().lower()
-    return normalized in {"1", "true", "yes", "on"}
+try:
+    import google.auth as google_auth
+except ImportError:  # pragma: no cover
+    google_auth = None
 
 
 @dataclass(frozen=True)
@@ -26,6 +23,7 @@ class GeeSettings:
     service_account_email: str
     private_key_file: str
     backend_dir: Path
+    auth_mode: str = "service_account_key"
 
     def resolved_key_path(self) -> Path:
         key_path = Path(self.private_key_file)
@@ -45,19 +43,15 @@ class GeeConnectionContext:
 
 
 def load_gee_settings() -> GeeSettings:
-    backend_dir = Path(__file__).resolve().parents[2]
-    env_path = backend_dir / ".env"
-    env_values = dotenv_values(env_path) if env_path.exists() else {}
-
-    def _get(name: str, default: str = "") -> str:
-        return os.getenv(name, env_values.get(name, default)).strip()
+    app_settings = config_module.build_settings()
 
     return GeeSettings(
-        enabled=_parse_bool(_get("GEE_ENABLED", "false"), default=False),
-        project_id=_get("GEE_PROJECT_ID", ""),
-        service_account_email=_get("GEE_SERVICE_ACCOUNT_EMAIL", ""),
-        private_key_file=_get("GEE_PRIVATE_KEY_FILE", "secrets/gee-service-account.json"),
-        backend_dir=backend_dir,
+        enabled=app_settings.gee_enabled,
+        auth_mode=app_settings.gee_auth_mode,
+        project_id=app_settings.gee_project_id,
+        service_account_email=app_settings.gee_service_account_email,
+        private_key_file=app_settings.gee_private_key_file,
+        backend_dir=app_settings.backend_dir,
     )
 
 
@@ -65,22 +59,49 @@ class GeeService:
     def __init__(self):
         self._initialized = False
         self._initialized_project_id: str | None = None
+        self._initialized_auth_fingerprint: str | None = None
+
+    def _settings_fingerprint(self, settings: GeeSettings) -> str:
+        if settings.auth_mode == "adc":
+            return f"adc:{settings.project_id}"
+        return (
+            f"service_account_key:{settings.project_id}:{settings.service_account_email}:"
+            f"{settings.resolved_key_path()}"
+        )
 
     def _ensure_initialized(self, settings: GeeSettings) -> None:
-        if self._initialized and self._initialized_project_id == settings.project_id:
+        fingerprint = self._settings_fingerprint(settings)
+        if (
+            self._initialized
+            and self._initialized_project_id == settings.project_id
+            and self._initialized_auth_fingerprint == fingerprint
+        ):
             return
 
-        credentials = ee.ServiceAccountCredentials(
-            settings.service_account_email,
-            str(settings.resolved_key_path()),
-        )
+        if settings.auth_mode == "adc":
+            credentials, _detected_project = google_auth.default()
+        elif settings.auth_mode == "service_account_key":
+            credentials = ee.ServiceAccountCredentials(
+                settings.service_account_email,
+                str(settings.resolved_key_path()),
+            )
+        else:
+            raise ValueError("Unsupported GEE_AUTH_MODE.")
+
         ee.Initialize(credentials=credentials, project=settings.project_id)
         self._initialized = True
         self._initialized_project_id = settings.project_id
+        self._initialized_auth_fingerprint = fingerprint
 
     def _reset_initialization(self) -> None:
         self._initialized = False
         self._initialized_project_id = None
+        self._initialized_auth_fingerprint = None
+
+    def _authentication_failure_message(self, settings: GeeSettings) -> str:
+        if settings.auth_mode == "adc":
+            return "Google Earth Engine authentication failed. Verify ADC configuration and runtime identity."
+        return "Google Earth Engine authentication failed. Verify configuration and credentials."
 
     def get_connection_context(self) -> GeeConnectionContext:
         settings = load_gee_settings()
@@ -95,13 +116,25 @@ class GeeService:
                 settings=settings,
             )
 
+        if settings.auth_mode not in config_module.SUPPORTED_GEE_AUTH_MODES:
+            return GeeConnectionContext(
+                enabled=True,
+                connected=False,
+                status="invalid_configuration",
+                message="GEE_AUTH_MODE must be one of: service_account_key, adc.",
+                project_id=None,
+                settings=settings,
+            )
+
         missing_fields: list[str] = []
         if not settings.project_id:
             missing_fields.append("GEE_PROJECT_ID")
-        if not settings.service_account_email:
-            missing_fields.append("GEE_SERVICE_ACCOUNT_EMAIL")
-        if not settings.private_key_file:
-            missing_fields.append("GEE_PRIVATE_KEY_FILE")
+
+        if settings.auth_mode == "service_account_key":
+            if not settings.service_account_email:
+                missing_fields.append("GEE_SERVICE_ACCOUNT_EMAIL")
+            if not settings.private_key_file:
+                missing_fields.append("GEE_PRIVATE_KEY_FILE")
 
         if missing_fields:
             return GeeConnectionContext(
@@ -113,13 +146,22 @@ class GeeService:
                 settings=settings,
             )
 
-        key_path = settings.resolved_key_path()
-        if not key_path.is_file():
+        if settings.auth_mode == "service_account_key" and not settings.resolved_key_path().is_file():
             return GeeConnectionContext(
                 enabled=True,
                 connected=False,
                 status="key_file_missing",
                 message="Configured GEE private key file was not found.",
+                project_id=None,
+                settings=settings,
+            )
+
+        if settings.auth_mode == "adc" and google_auth is None:
+            return GeeConnectionContext(
+                enabled=True,
+                connected=False,
+                status="dependency_unavailable",
+                message="google-auth dependency is not available in the backend environment.",
                 project_id=None,
                 settings=settings,
             )
@@ -151,7 +193,7 @@ class GeeService:
                 enabled=True,
                 connected=False,
                 status="authentication_failed",
-                message="Google Earth Engine authentication failed. Verify configuration and credentials.",
+                message=self._authentication_failure_message(settings),
                 project_id=None,
                 settings=settings,
             )
