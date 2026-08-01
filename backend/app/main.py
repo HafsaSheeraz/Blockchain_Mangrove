@@ -106,6 +106,15 @@ def create_app() -> FastAPI:
     def health_check():
         return {"status": "ok"}
 
+    @app.get("/", tags=["System"])
+    def root():
+        return {
+            "service": "Mangrove Carbon API",
+            "status": "running",
+            "health": "/health",
+            "docs": "/docs",
+        }
+
     @app.get("/ready", tags=["System"])
     def readiness_check():
         issues = settings.readiness_issues()
