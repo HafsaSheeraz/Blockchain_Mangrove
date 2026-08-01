@@ -1,0 +1,65 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment files
+.env
+.env.*
+backend/.env
+frontend/.env
+backend/secrets/
+backend/secrets/*.json
+backend/secrets/*.pem
+backend/secrets/*.key
+backend/secrets/*.p12
+backend/secrets/*.pfx
+**/*service-account*.json
+**/*credentials*.json
+**/*client_secret*.json
+*.pem
+*.key
+
+# Node / Vite
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# IDE / OS
+.vscode/
+.idea/
+*.suo
+*.user
+Thumbs.db
+.DS_Store
+
+# Test / coverage / generated artifacts
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage*
+coverage/
+.coverage
+coverage.xml
+*.log
+*.tmp
+*.temp
+tmp/
+temp/
+exports/
+reports/
+backend/cd
+backend/test_output.txt
+frontend/.vitest-results.json
