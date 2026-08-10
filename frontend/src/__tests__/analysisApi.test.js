@@ -4,9 +4,13 @@ import {
   buildAnalyzeUrl,
   buildCarbonStockSummaryUrl,
   buildExportUrl,
+  buildGmwCoverageCheckUrl,
+  buildGmwLayerUrl,
   buildMapLayersUrl,
+  checkCustomAoiMangroveCoverage,
   downloadAoiExport,
   getCarbonStockSummary,
+  getGmwLayerOverlay,
   submitAoiMapLayers,
   submitCustomAoiAnalysis,
 } from '../services/analysisApi'
@@ -111,6 +115,14 @@ describe('analysisApi service', () => {
 
   it('builds the expected map-layer URL from VITE_API_BASE_URL', () => {
     expect(buildMapLayersUrl()).toBe('http://127.0.0.1:8001/api/analyze/map-layers')
+  })
+
+  it('builds the expected GMW layer URL from VITE_API_BASE_URL', () => {
+    expect(buildGmwLayerUrl()).toBe('http://127.0.0.1:8001/api/map/gmw-layer?study_area=custom')
+  })
+
+  it('builds the expected GMW coverage-check URL from VITE_API_BASE_URL', () => {
+    expect(buildGmwCoverageCheckUrl()).toBe('http://127.0.0.1:8001/api/map/gmw-coverage-check')
   })
 
   it('normalizes trailing slash in VITE_API_BASE_URL', () => {
@@ -432,6 +444,65 @@ describe('analysisApi service', () => {
     await expect(submitAoiMapLayers({ study_area: 'custom' })).rejects.toMatchObject({
       code: 'malformed_response',
     })
+  })
+
+  it('loads the GMW layer descriptor via GET', async () => {
+    const responsePayload = {
+      mode: 'live_earth_engine_gmw_layer',
+      study_area: 'custom',
+      gmw_asset_id: 'projects/sat-io/open-datasets/GMW/annual-extent/GMW_MNG_2020',
+      tile_url_template: 'https://earthengine.googleapis.com/v1/projects/mangroves123/maps/t1/tiles/{z}/{x}/{y}',
+      default_visible: true,
+      default_opacity: 0.5,
+      palette: ['2e8b57'],
+      label: 'Mangrove Area (Global Mangrove Watch)',
+    }
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify(responsePayload), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+
+    const result = await getGmwLayerOverlay({ studyArea: 'custom' })
+    expect(result.mode).toBe('live_earth_engine_gmw_layer')
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:8001/api/map/gmw-layer?study_area=custom',
+      expect.objectContaining({ method: 'GET' }),
+    )
+  })
+
+  it('checks custom AOI mangrove coverage via POST', async () => {
+    const payload = {
+      study_area: 'custom',
+      aoi_geometry: {
+        type: 'Polygon',
+        coordinates: [[[67, 24], [67.4, 24], [67.4, 24.4], [67, 24.4], [67, 24]]],
+      },
+    }
+    const responsePayload = {
+      mode: 'live_earth_engine_gmw_coverage_check',
+      study_area: 'custom',
+      has_mangroves: false,
+      mapped_mangrove_area_ha: 0,
+      message: 'No mapped mangroves were found inside this polygon. Please draw inside the highlighted green areas.',
+    }
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify(responsePayload), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+
+    const result = await checkCustomAoiMangroveCoverage(payload)
+    expect(result.has_mangroves).toBe(false)
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:8001/api/map/gmw-coverage-check',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }),
+    )
   })
 })
 

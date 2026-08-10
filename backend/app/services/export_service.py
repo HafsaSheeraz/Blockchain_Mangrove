@@ -12,7 +12,9 @@ import csv
 import io
 import json
 import math
+import os
 import re
+import tempfile
 import unicodedata
 import textwrap
 from datetime import datetime, timezone
@@ -26,6 +28,7 @@ from app.models.analysis import (
     ExportMetric,
     ExportScientificResults,
 )
+from app.services.export_map_service import render_study_area_map_png
 
 REPORT_SCHEMA_VERSION = "module15_v1"
 MAX_SAFE_FILENAME_LENGTH = 96
@@ -506,6 +509,36 @@ def generate_pdf(document: ExportDocument) -> bytes:
         ],
     )
 
+    _write_section_title(pdf, "Study Area Map")
+    map_image_path: str | None = None
+    map_inserted = False
+    try:
+        map_image_bytes = render_study_area_map_png(document)
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
+            temp_file.write(map_image_bytes)
+            map_image_path = temp_file.name
+        usable_width = pdf.w - pdf.l_margin - pdf.r_margin
+        pdf.image(map_image_path, x=pdf.l_margin, w=usable_width)
+        map_inserted = True
+    except (RuntimeError, OSError, ValueError):
+        pdf.set_font("Helvetica", "", 10)
+        pdf.multi_cell(0, 6, _pdf_text("Study area map could not be generated."))
+    finally:
+        if map_image_path and os.path.exists(map_image_path):
+            os.remove(map_image_path)
+
+    if map_inserted:
+        pdf.ln(2)
+        pdf.set_font("Helvetica", "I", 9)
+        pdf.multi_cell(
+            0,
+            5,
+            _pdf_text(
+                "Figure 1.\nSelected Area of Interest (AOI) overlaid on the Global Mangrove Watch mangrove distribution used for carbon stock estimation."
+            ),
+        )
+    pdf.ln(2)
+
     _write_kv_lines(
         pdf,
         [
@@ -551,11 +584,13 @@ def generate_pdf(document: ExportDocument) -> bytes:
     _write_section_title(pdf, "Assumptions and warnings")
     assumptions = document.assumptions or ["None"]
     warnings = document.warnings or ["None"]
+    assumptions_text = "\n".join(f"- {_pdf_text(item)}" for item in assumptions)
+    warnings_text = "\n".join(f"- {_pdf_text(item)}" for item in warnings)
     _write_kv_lines(
         pdf,
         [
-            ("Assumptions", "; ".join(_pdf_text(item) for item in assumptions)),
-            ("Warnings", "; ".join(_pdf_text(item) for item in warnings)),
+            ("Assumptions", assumptions_text),
+            ("Warnings", warnings_text),
         ],
     )
 

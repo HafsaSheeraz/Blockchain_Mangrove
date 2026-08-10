@@ -1,4 +1,4 @@
-.analysis-page {
+﻿.analysis-page {
   --navy-900: #0a1628;
   --teal-700: #0d6b61;
   --teal-500: #14b8a6;
@@ -413,7 +413,7 @@
 }
 
 .request-json-disclosure summary::before {
-  content: '▶';
+  content: 'â–¶';
   font-size: 0.65em;
   transition: transform 0.15s ease;
   display: inline-block;
@@ -790,7 +790,7 @@
   }
 }
 
-/* ── Export buttons ──────────────────────────────────────────────────── */
+/* â”€â”€ Export buttons â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 .export-buttons {
   display: flex;
@@ -843,9 +843,9 @@
   max-width: 180px;
 }
 
-/* ═══════════════════════════════════════════════════════
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
    Modern dashboard overrides
-═══════════════════════════════════════════════════════════════ */
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 
 .analysis-page {
   background: linear-gradient(180deg, #f8f5f0 0%, #eef3ef 100%);
@@ -1416,4 +1416,43 @@
   .aoi-results-actions > * {
     flex: 1 1 100%;
   }
+}
+
+/* ---- Mangrove Info Card ---- */
+.mangrove-info-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  background: linear-gradient(135deg, #eafaf3 0%, #f0fdf6 100%);
+  border: 1px solid rgba(45, 106, 79, 0.22);
+  box-shadow: var(--shadow-sm);
+}
+
+.mangrove-info-icon {
+  font-size: 1.35rem;
+  flex-shrink: 0;
+  line-height: 1;
+  margin-top: 2px;
+}
+
+.mangrove-info-body {
+  display: grid;
+  gap: 4px;
+}
+
+.mangrove-info-headline {
+  margin: 0;
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--green-700, #2d6a4f);
+  line-height: 1.35;
+}
+
+.mangrove-info-detail {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--text-muted, #64748b);
+  line-height: 1.5;
 }

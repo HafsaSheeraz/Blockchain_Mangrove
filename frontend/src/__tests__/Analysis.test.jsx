@@ -4,16 +4,34 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import App from '../App'
-import { ApiError, getCarbonStockSummary, submitAoiMapLayers, submitCustomAoiAnalysis, downloadAoiExport } from '../services/analysisApi'
+import {
+  ApiError,
+  checkCustomAoiMangroveCoverage,
+  downloadAoiExport,
+  getCarbonStockSummary,
+  getGmwLayerOverlay,
+  submitAoiMapLayers,
+  submitCustomAoiAnalysis,
+} from '../services/analysisApi'
 
 vi.mock('../components/analysis/StudyAreaMap', () => ({
   default: function MockStudyAreaMap({
     studyAreaMode,
     onCustomAoiChange,
+    gmwOverlayVisible,
+    onToggleGmwOverlay,
   }) {
     return (
       <section aria-label="Mock study area map">
         <p>Map mode: {studyAreaMode}</p>
+        <label>
+          <input
+            type="checkbox"
+            checked={Boolean(gmwOverlayVisible)}
+            onChange={(event) => onToggleGmwOverlay(event.target.checked)}
+          />
+          Show Mangrove Layer
+        </label>
         <button
           type="button"
           onClick={() =>
@@ -51,6 +69,8 @@ vi.mock('../services/analysisApi', () => ({
     }
   },
   getCarbonStockSummary: vi.fn(),
+  getGmwLayerOverlay: vi.fn(),
+  checkCustomAoiMangroveCoverage: vi.fn(),
   submitCustomAoiAnalysis: vi.fn(),
   submitAoiMapLayers: vi.fn(),
   downloadAoiExport: vi.fn(),
@@ -214,11 +234,57 @@ function createDeferred() {
 beforeEach(() => {
   vi.clearAllMocks()
   submitCustomAoiAnalysis.mockReset()
+  getGmwLayerOverlay.mockReset()
+  checkCustomAoiMangroveCoverage.mockReset()
   submitAoiMapLayers.mockReset()
   downloadAoiExport.mockReset()
+  getGmwLayerOverlay.mockResolvedValue({
+    mode: 'live_earth_engine_gmw_layer',
+    study_area: 'custom',
+    gmw_asset_id: 'projects/sat-io/open-datasets/GMW/annual-extent/GMW_MNG_2020',
+    tile_url_template: 'https://earthengine.googleapis.com/v1/projects/mangroves123/maps/mock/tiles/{z}/{x}/{y}',
+    default_visible: true,
+    default_opacity: 0.5,
+    palette: ['2e8b57'],
+    label: 'Mangrove Area (Global Mangrove Watch)',
+  })
+  checkCustomAoiMangroveCoverage.mockResolvedValue({
+    mode: 'live_earth_engine_gmw_coverage_check',
+    study_area: 'custom',
+    has_mangroves: true,
+    mapped_mangrove_area_ha: 1.2,
+    message: null,
+  })
 })
 
 describe('Carbon stock dashboard', () => {
+  it('loads the default GMW overlay when the analysis page mounts', async () => {
+    getCarbonStockSummary.mockResolvedValueOnce(LIVE_SUCCESS_RESPONSE)
+    renderAnalysis()
+
+    await waitFor(() => {
+      expect(getGmwLayerOverlay).toHaveBeenCalledTimes(1)
+      // The overlay always uses the global GMW mask ('custom') so mangroves are visible worldwide.
+      expect(getGmwLayerOverlay).toHaveBeenCalledWith(expect.objectContaining({ signal: expect.any(AbortSignal), studyArea: 'custom' }))
+    })
+    expect(screen.getByRole('checkbox', { name: /show mangrove layer/i })).toBeChecked()
+  })
+
+  it('allows toggling the mangrove overlay without affecting analysis loading', async () => {
+    getCarbonStockSummary.mockResolvedValueOnce(LIVE_SUCCESS_RESPONSE)
+    const user = userEvent.setup()
+    renderAnalysis()
+
+    await screen.findByText(/mode:\s*live_earth_engine/i)
+    const toggle = screen.getByRole('checkbox', { name: /show mangrove layer/i })
+    expect(toggle).toBeChecked()
+    await user.click(toggle)
+    expect(toggle).not.toBeChecked()
+    await user.click(toggle)
+    expect(toggle).toBeChecked()
+    expect(getCarbonStockSummary).toHaveBeenCalledTimes(1)
+  })
+
   it('requests the carbon stock summary endpoint via API service', async () => {
     getCarbonStockSummary.mockResolvedValueOnce(LIVE_SUCCESS_RESPONSE)
     renderAnalysis()
@@ -446,6 +512,27 @@ describe('Carbon stock dashboard', () => {
 
     expect(screen.getByRole('alert')).toHaveTextContent(/draw a custom aoi polygon to continue/i)
     expect(screen.getByText(/✗ incomplete input/i)).toBeInTheDocument()
+  })
+
+  it('shows no-mangrove warning and blocks run analysis when drawn polygon has no mapped mangroves', async () => {
+    getCarbonStockSummary.mockResolvedValueOnce(LIVE_SUCCESS_RESPONSE)
+    checkCustomAoiMangroveCoverage.mockResolvedValueOnce({
+      mode: 'live_earth_engine_gmw_coverage_check',
+      study_area: 'custom',
+      has_mangroves: false,
+      mapped_mangrove_area_ha: 0,
+      message: 'No mapped mangroves were found inside this polygon. Please draw inside the highlighted green areas.',
+    })
+    const user = userEvent.setup()
+    renderAnalysis()
+
+    await screen.findByText(/mode:\s*live_earth_engine/i)
+    await user.click(screen.getByRole('radio', { name: /custom aoi/i }))
+    await user.click(screen.getByRole('button', { name: /mock draw polygon/i }))
+
+    await screen.findByText(/no mapped mangroves were found inside this polygon/i)
+    expect(screen.getByRole('button', { name: /run analysis/i })).toBeDisabled()
+    expect(submitCustomAoiAnalysis).not.toHaveBeenCalled()
   })
 
   it('initializes draw controls without error when switching to custom AOI in StrictMode', async () => {

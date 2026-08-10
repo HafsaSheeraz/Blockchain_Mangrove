@@ -4,7 +4,15 @@ import StudyAreaMap from '../components/analysis/StudyAreaMap'
 import StudyAreaSetup from '../components/analysis/StudyAreaSetup'
 import { DEFAULT_STUDY_AREA_ID, STUDY_AREAS, STUDY_AREAS_BY_ID } from '../config/studyAreas'
 import { buildPreparedAnalysisRequest, buildBackendAnalyzeRequest } from '../services/analysisRequestBuilder'
-import { ApiError, getCarbonStockSummary, submitAoiMapLayers, submitCustomAoiAnalysis, downloadAoiExport } from '../services/analysisApi'
+import {
+  ApiError,
+  checkCustomAoiMangroveCoverage,
+  downloadAoiExport,
+  getCarbonStockSummary,
+  getGmwLayerOverlay,
+  submitAoiMapLayers,
+  submitCustomAoiAnalysis,
+} from '../services/analysisApi'
 import { formatDecimal, formatInteger, formatPercent, withUnit } from '../utils/formatters'
 import './Analysis.css'
 
@@ -29,7 +37,24 @@ const MAP_LAYER_STATE = {
   ERROR: 'error',
 }
 
+const GMW_OVERLAY_STATE = {
+  IDLE: 'idle',
+  LOADING: 'loading',
+  SUCCESS: 'success',
+  ERROR: 'error',
+}
+
+const GMW_COVERAGE_STATE = {
+  IDLE: 'idle',
+  CHECKING: 'checking',
+  HAS_MANGROVES: 'has_mangroves',
+  NO_MANGROVES: 'no_mangroves',
+  ERROR: 'error',
+}
+
 const UNAVAILABLE = 'Unavailable'
+const NO_MANGROVES_WARNING =
+  'No mapped mangroves were found inside this polygon. Please draw inside the highlighted green areas.'
 
 const ArrowLeftIcon = () => (
   <svg viewBox="0 0 20 20" width="16" height="16" fill="currentColor" aria-hidden="true">
@@ -493,6 +518,38 @@ function Methodology({ summary }) {
   )
 }
 
+const MANGROVE_INFO = {
+  indus_delta: {
+    headline: 'Grey Mangrove (Avicennia marina) dominates the Indus Delta.',
+    detail:
+      'Avicennia marina is the primary species across this region, forming dense salt-tolerant stands along tidal channels. Other coastal regions host Red Mangrove (Rhizophora) and Spurred Mangrove (Ceriops).',
+  },
+  abu_dhabi: {
+    headline: 'Grey Mangrove (Avicennia marina) is the main mangrove of Abu Dhabi.',
+    detail:
+      'A. marina thrives in the hyper-arid, high-salinity conditions of the Arabian Gulf. Other mangrove types such as Red Mangrove (Rhizophora) and Spurred Mangrove (Ceriops) occur in wetter tropical coasts.',
+  },
+  custom: {
+    headline: 'Mangrove species vary by region.',
+    detail:
+      'This analysis uses Global Mangrove Watch extent data. Dominant species in your drawn area may include Grey Mangrove (Avicennia marina), Red Mangrove (Rhizophora), or Spurred Mangrove (Ceriops) depending on climate and salinity.',
+  },
+}
+
+function MangroveInfoCard({ studyAreaMode, selectedRegionId }) {
+  const key = studyAreaMode === 'custom' ? 'custom' : (selectedRegionId in MANGROVE_INFO ? selectedRegionId : 'custom')
+  const info = MANGROVE_INFO[key]
+  return (
+    <aside className="mangrove-info-card" aria-label="Mangrove species information">
+      <span className="mangrove-info-icon" aria-hidden="true">🌿</span>
+      <div className="mangrove-info-body">
+        <p className="mangrove-info-headline">{info.headline}</p>
+        <p className="mangrove-info-detail">{info.detail}</p>
+      </div>
+    </aside>
+  )
+}
+
 function Analysis() {
   const [state, setState] = useState(STATE.LOADING)
   const [summary, setSummary] = useState(null)
@@ -517,6 +574,13 @@ function Analysis() {
   const [mapLayerMessage, setMapLayerMessage] = useState('')
   const [mapLayerVisibilityById, setMapLayerVisibilityById] = useState({})
   const [mapLayerOpacityById, setMapLayerOpacityById] = useState({})
+  const [gmwOverlayState, setGmwOverlayState] = useState(GMW_OVERLAY_STATE.IDLE)
+  const [gmwOverlayError, setGmwOverlayError] = useState('')
+  const [gmwOverlayTileUrl, setGmwOverlayTileUrl] = useState('')
+  const [gmwOverlayOpacity, setGmwOverlayOpacity] = useState(0.5)
+  const [showGmwOverlay, setShowGmwOverlay] = useState(true)
+  const [gmwCoverageState, setGmwCoverageState] = useState(GMW_COVERAGE_STATE.IDLE)
+  const [customAoiCoverageWarning, setCustomAoiCoverageWarning] = useState('')
   const [submittedAoiRequestSignature, setSubmittedAoiRequestSignature] = useState(null)
   const aoiResultsSectionRef = useRef(null)
   const isMountedRef = useRef(false)
@@ -526,6 +590,10 @@ function Analysis() {
   const latestAoiRequestIdRef = useRef(0)
   const mapLayerControllerRef = useRef(null)
   const latestMapLayerRequestIdRef = useRef(0)
+  const gmwOverlayControllerRef = useRef(null)
+  const latestGmwOverlayRequestIdRef = useRef(0)
+  const gmwCoverageControllerRef = useRef(null)
+  const latestGmwCoverageRequestIdRef = useRef(0)
   const exportControllerRefs = useRef({})
   const latestExportRequestIdsRef = useRef({})
 
@@ -560,6 +628,14 @@ function Analysis() {
   const preparedRequestSignature = useMemo(
     () => (preparedBackendRequest ? JSON.stringify(preparedBackendRequest) : null),
     [preparedBackendRequest],
+  )
+  const setupValidationErrors = useMemo(
+    () => (
+      customAoiCoverageWarning
+        ? [...preparedRequest.errors, customAoiCoverageWarning]
+        : preparedRequest.errors
+    ),
+    [preparedRequest.errors, customAoiCoverageWarning],
   )
 
   const clearMapLayers = useCallback(() => {
@@ -666,8 +742,51 @@ function Analysis() {
     }
   }, [])
 
+  const loadGmwOverlay = useCallback(async () => {
+    if (gmwOverlayControllerRef.current) {
+      gmwOverlayControllerRef.current.abort()
+    }
+
+    const requestId = latestGmwOverlayRequestIdRef.current + 1
+    latestGmwOverlayRequestIdRef.current = requestId
+    const controller = new AbortController()
+    gmwOverlayControllerRef.current = controller
+    setGmwOverlayState(GMW_OVERLAY_STATE.LOADING)
+    setGmwOverlayError('')
+
+    // Always use the global GMW mask ('custom') for the visual overlay so that
+    // mangroves are visible worldwide — not just within the selected region's asset.
+    // The analysis pipeline uses the region-specific asset separately.
+    const studyArea = 'custom'
+
+    try {
+      const payload = await getGmwLayerOverlay({ studyArea, signal: controller.signal })
+      if (!isMountedRef.current || controller.signal.aborted || latestGmwOverlayRequestIdRef.current !== requestId) {
+        return
+      }
+      setGmwOverlayTileUrl(payload.tile_url_template)
+      setGmwOverlayOpacity(typeof payload.default_opacity === 'number' ? payload.default_opacity : 0.5)
+      setShowGmwOverlay(Boolean(payload.default_visible))
+      setGmwOverlayState(GMW_OVERLAY_STATE.SUCCESS)
+    } catch (error) {
+      if ((error instanceof ApiError && error.code === 'request_aborted') || controller.signal.aborted) {
+        return
+      }
+      if (!isMountedRef.current || latestGmwOverlayRequestIdRef.current !== requestId) {
+        return
+      }
+      setGmwOverlayState(GMW_OVERLAY_STATE.ERROR)
+      setGmwOverlayError(getApiErrorMessage(error))
+      setGmwOverlayTileUrl('')
+    } finally {
+      if (latestGmwOverlayRequestIdRef.current === requestId && gmwOverlayControllerRef.current === controller) {
+        gmwOverlayControllerRef.current = null
+      }
+    }
+  }, [])
+
   const submitAoiAnalysis = useCallback(async () => {
-    if (!preparedRequestIsValid) {
+    if (!preparedRequestIsValid || customAoiCoverageWarning) {
       return
     }
 
@@ -715,7 +834,7 @@ function Analysis() {
         aoiSubmissionControllerRef.current = null
       }
     }
-  }, [preparedRequestIsValid, preparedBackendRequest, loadMapLayers, clearMapLayers])
+  }, [preparedRequestIsValid, preparedBackendRequest, loadMapLayers, clearMapLayers, customAoiCoverageWarning])
 
   const retryAoiAnalysis = useCallback(async () => {
     await submitAoiAnalysis()
@@ -840,8 +959,87 @@ function Analysis() {
       if (mapLayerControllerRef.current) {
         mapLayerControllerRef.current.abort()
       }
+      if (gmwOverlayControllerRef.current) {
+        gmwOverlayControllerRef.current.abort()
+      }
+      if (gmwCoverageControllerRef.current) {
+        gmwCoverageControllerRef.current.abort()
+      }
     }
   }, [abortExportRequests, loadSummary])
+
+  // Load the global GMW overlay once on mount so mangroves are visible
+  // worldwide before the user selects a region or runs any analysis.
+  useEffect(() => {
+    loadGmwOverlay()
+  }, [loadGmwOverlay])
+
+  useEffect(() => {
+    if (studyAreaMode !== 'custom') {
+      setGmwCoverageState(GMW_COVERAGE_STATE.IDLE)
+      setCustomAoiCoverageWarning('')
+      if (gmwCoverageControllerRef.current) {
+        gmwCoverageControllerRef.current.abort()
+      }
+      return
+    }
+
+    if (!customAoi) {
+      setGmwCoverageState(GMW_COVERAGE_STATE.IDLE)
+      setCustomAoiCoverageWarning('')
+      if (gmwCoverageControllerRef.current) {
+        gmwCoverageControllerRef.current.abort()
+      }
+      return
+    }
+
+    if (gmwCoverageControllerRef.current) {
+      gmwCoverageControllerRef.current.abort()
+    }
+    const requestId = latestGmwCoverageRequestIdRef.current + 1
+    latestGmwCoverageRequestIdRef.current = requestId
+    const controller = new AbortController()
+    gmwCoverageControllerRef.current = controller
+    setGmwCoverageState(GMW_COVERAGE_STATE.CHECKING)
+    setCustomAoiCoverageWarning('')
+
+    const runCheck = async () => {
+      try {
+        const payload = await checkCustomAoiMangroveCoverage(
+          {
+            study_area: 'custom',
+            aoi_geometry: customAoi,
+          },
+          { signal: controller.signal },
+        )
+        if (!isMountedRef.current || controller.signal.aborted || latestGmwCoverageRequestIdRef.current !== requestId) {
+          return
+        }
+        if (payload.has_mangroves) {
+          setGmwCoverageState(GMW_COVERAGE_STATE.HAS_MANGROVES)
+          setCustomAoiCoverageWarning('')
+          return
+        }
+        setGmwCoverageState(GMW_COVERAGE_STATE.NO_MANGROVES)
+        setCustomAoiCoverageWarning(NO_MANGROVES_WARNING)
+      } catch (error) {
+        if ((error instanceof ApiError && error.code === 'request_aborted') || controller.signal.aborted) {
+          return
+        }
+        if (!isMountedRef.current || latestGmwCoverageRequestIdRef.current !== requestId) {
+          return
+        }
+        setGmwCoverageState(GMW_COVERAGE_STATE.ERROR)
+        setCustomAoiCoverageWarning('')
+      } finally {
+        if (latestGmwCoverageRequestIdRef.current === requestId && gmwCoverageControllerRef.current === controller) {
+          gmwCoverageControllerRef.current = null
+        }
+      }
+    }
+
+    runCheck()
+  }, [studyAreaMode, customAoi])
 
   useEffect(() => {
     if (!submittedAoiRequestSignature) {
@@ -869,6 +1067,11 @@ function Analysis() {
       preparedRequestSignature &&
       preparedRequestSignature !== submittedAoiRequestSignature &&
       aoiSubmissionState !== AOI_SUBMISSION_STATE.IDLE,
+  )
+  const isRunAnalysisBlockedByCoverage = Boolean(
+    studyAreaMode === 'custom'
+      && customAoi
+      && gmwCoverageState === GMW_COVERAGE_STATE.NO_MANGROVES,
   )
 
   useEffect(() => {
@@ -927,13 +1130,15 @@ function Analysis() {
               endDate={endDate}
               activeAoi={activeAoi}
               customAoi={customAoi}
-              validationErrors={preparedRequest.errors}
+              validationErrors={setupValidationErrors}
               onModeChange={setStudyAreaMode}
               onRegionChange={handleRegionChange}
               onStartDateChange={setStartDate}
               onEndDateChange={setEndDate}
               onClearCustomAoi={() => setCustomAoi(null)}
             />
+
+            <MangroveInfoCard studyAreaMode={studyAreaMode} selectedRegionId={selectedRegionId} />
 
             <section className="request-preview-panel" aria-labelledby="request-preview-title">
               <h2 id="request-preview-title" className="panel-title">Analysis Request Summary</h2>
@@ -982,7 +1187,11 @@ function Analysis() {
                   type="button"
                   className="run-analysis-btn"
                   onClick={submitAoiAnalysis}
-                  disabled={!preparedRequest.isValid || aoiSubmissionState === AOI_SUBMISSION_STATE.SUBMITTING}
+                  disabled={
+                    !preparedRequest.isValid
+                    || isRunAnalysisBlockedByCoverage
+                    || aoiSubmissionState === AOI_SUBMISSION_STATE.SUBMITTING
+                  }
                 >
                   {aoiSubmissionState === AOI_SUBMISSION_STATE.SUBMITTING ? 'Submitting…' : 'Run Analysis'}
                 </button>
@@ -1024,6 +1233,13 @@ function Analysis() {
                   ? 'Loading Earth Engine map layers…'
                   : mapLayerMessage
               }
+              gmwOverlayTileUrl={gmwOverlayTileUrl}
+              gmwOverlayOpacity={gmwOverlayOpacity}
+              gmwOverlayVisible={showGmwOverlay}
+              onToggleGmwOverlay={setShowGmwOverlay}
+              gmwOverlayStatus={gmwOverlayState}
+              gmwOverlayError={gmwOverlayError}
+              gmwCoverageState={gmwCoverageState}
             />
           </div>
         </section>

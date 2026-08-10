@@ -2,6 +2,7 @@ import csv
 import io
 import json
 import re
+import base64
 from datetime import date
 from unittest.mock import patch
 
@@ -283,14 +284,14 @@ async def test_csv_export_quotes_text_cells_and_preserves_commas():
 
 
 @pytest.mark.asyncio
-async def test_pdf_export_contains_signature_metadata_and_two_pages():
+async def test_pdf_export_contains_signature_metadata_and_page_numbers():
     result = _make_success_result()
     with _patch_run_custom(result):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/api/analyze/export/pdf", json=_export_payload())
 
     assert response.content[:4] == b"%PDF"
-    assert b"/Count 2" in response.content
+    assert b"/Count " in response.content
     assert b"Page 1/" in response.content
     assert b"Page 2/" in response.content
     pdf_text = response.content.decode("latin-1", errors="ignore")
@@ -524,6 +525,24 @@ def test_generate_csv_header_order_matches_documentation():
 
 def test_generate_pdf_contains_page_number_marker():
     result = build_export_document(_make_success_result(), processing_version="fingerprint-123")
-    pdf_bytes = generate_pdf(result)
+    with patch(
+        "app.services.export_service.render_study_area_map_png",
+        return_value=base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO5M6tcAAAAASUVORK5CYII="
+        ),
+    ):
+        pdf_bytes = generate_pdf(result)
     assert pdf_bytes[:4] == b"%PDF"
     assert b"Page 1/" in pdf_bytes
+    assert b"Figure 1." in pdf_bytes
+    assert b"Selected Area of Interest" in pdf_bytes
+
+
+def test_generate_pdf_includes_map_fallback_message_when_map_fails():
+    result = build_export_document(_make_success_result(), processing_version="fingerprint-123")
+    with patch(
+        "app.services.export_service.render_study_area_map_png",
+        side_effect=RuntimeError("map failure"),
+    ):
+        pdf_bytes = generate_pdf(result)
+    assert b"Study area map could not be generated." in pdf_bytes

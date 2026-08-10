@@ -110,6 +110,13 @@ export default function StudyAreaMap({
   onResetMapLayerDefaults,
   mapLayerWarnings,
   mapLayerMessage,
+  gmwOverlayTileUrl,
+  gmwOverlayOpacity,
+  gmwOverlayVisible,
+  onToggleGmwOverlay,
+  gmwOverlayStatus,
+  gmwOverlayError,
+  gmwCoverageState,
 }) {
   const featureGroupRef = useRef(null)
   const defaultCenter = selectedRegion?.map?.center ?? [24.15, 67.5]
@@ -169,6 +176,16 @@ export default function StudyAreaMap({
           />
           <FitMapToGeometry geometry={fitGeometry} center={defaultCenter} zoom={defaultZoom} />
 
+          {gmwOverlayVisible && gmwOverlayTileUrl && (
+            <TileLayer
+              key="gmw-overlay-tile-layer"
+              url={gmwOverlayTileUrl}
+              opacity={gmwOverlayOpacity ?? 0.5}
+              zIndex={450}
+              crossOrigin
+            />
+          )}
+
           <RasterTileLayers
             layers={mapLayers}
             visibilityById={mapLayerVisibilityById}
@@ -203,6 +220,31 @@ export default function StudyAreaMap({
       {mapLayerMessage && (
         <p className="custom-hint">{mapLayerMessage}</p>
       )}
+      <section className="map-layer-controls" aria-label="Mangrove layer controls">
+        <h3 className="summary-title">Mangrove layer</h3>
+        <label className="mode-option">
+          <input
+            type="checkbox"
+            checked={Boolean(gmwOverlayVisible)}
+            onChange={(event) => onToggleGmwOverlay(event.target.checked)}
+            disabled={!gmwOverlayTileUrl}
+          />
+          Show Mangrove Layer
+        </label>
+        <p className="custom-hint">🟩 Mangrove Area (Global Mangrove Watch)</p>
+        {gmwOverlayStatus === 'loading' && (
+          <p className="custom-hint">Loading mangrove layer…</p>
+        )}
+        {gmwOverlayError && (
+          <p className="custom-hint" role="alert">{gmwOverlayError}</p>
+        )}
+        {studyAreaMode === 'custom' && gmwCoverageState === 'checking' && (
+          <p className="custom-hint">Checking mangrove overlap for the drawn polygon…</p>
+        )}
+        {studyAreaMode === 'custom' && gmwCoverageState === 'error' && (
+          <p className="custom-hint">Unable to verify mangrove overlap right now. You can retry by redrawing the polygon.</p>
+        )}
+      </section>
       <LayerControls
         layers={mapLayers}
         visibilityById={mapLayerVisibilityById}

@@ -38,6 +38,8 @@ def test_vercel_entrypoint_contains_expected_public_routes():
     assert "/openapi.json" in paths
     assert "/api/gee/status" in paths
     assert "/api/analyze" in paths
+    assert "/api/map/gmw-layer" in paths
+    assert "/api/map/gmw-coverage-check" in paths
     assert "/api/index/health" not in paths
     assert "/api/index/ready" not in paths
     assert "/api/index/api/gee/status" not in paths

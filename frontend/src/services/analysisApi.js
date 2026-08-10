@@ -132,6 +132,15 @@ export function buildMapLayersUrl() {
   return `${ensureApiBaseUrl()}/api/analyze/map-layers`
 }
 
+export function buildGmwLayerUrl(studyArea = 'custom') {
+  const params = new URLSearchParams({ study_area: studyArea })
+  return `${ensureApiBaseUrl()}/api/map/gmw-layer?${params.toString()}`
+}
+
+export function buildGmwCoverageCheckUrl() {
+  return `${ensureApiBaseUrl()}/api/map/gmw-coverage-check`
+}
+
 export function buildExportUrl(format) {
   return `${ensureApiBaseUrl()}/api/analyze/export/${format}`
 }
@@ -250,6 +259,7 @@ function validateMapLayersResponseShape(payload) {
   if (!isPlainObject(payload)) {
     throw new ApiError('The map-layer service returned malformed data.', { code: 'malformed_response' })
   }
+
   const requiredTopLevel = [
     'mode',
     'study_area',
@@ -277,6 +287,56 @@ function validateMapLayersResponseShape(payload) {
         code: 'malformed_response',
       })
     }
+  }
+}
+
+function validateGmwLayerResponseShape(payload) {
+  if (!isPlainObject(payload)) {
+    throw new ApiError('The GMW layer service returned malformed data.', { code: 'malformed_response' })
+  }
+  const requiredTopLevel = [
+    'mode',
+    'study_area',
+    'gmw_asset_id',
+    'tile_url_template',
+    'default_visible',
+    'default_opacity',
+    'palette',
+    'label',
+  ]
+  const missing = requiredTopLevel.filter((key) => !(key in payload))
+  if (missing.length > 0) {
+    throw new ApiError(`The GMW layer response is missing required fields: ${missing.join(', ')}.`, {
+      code: 'malformed_response',
+    })
+  }
+  if (payload.mode !== 'live_earth_engine_gmw_layer') {
+    throw new ApiError('Unexpected GMW layer mode returned from server.', {
+      code: 'malformed_response',
+    })
+  }
+  if (typeof payload.tile_url_template !== 'string') {
+    throw new ApiError('The GMW layer response has an invalid tile URL.', {
+      code: 'malformed_response',
+    })
+  }
+}
+
+function validateGmwCoverageCheckResponseShape(payload) {
+  if (!isPlainObject(payload)) {
+    throw new ApiError('The GMW coverage check service returned malformed data.', { code: 'malformed_response' })
+  }
+  const requiredTopLevel = ['mode', 'study_area', 'has_mangroves']
+  const missing = requiredTopLevel.filter((key) => !(key in payload))
+  if (missing.length > 0) {
+    throw new ApiError(`The GMW coverage response is missing required fields: ${missing.join(', ')}.`, {
+      code: 'malformed_response',
+    })
+  }
+  if (payload.mode !== 'live_earth_engine_gmw_coverage_check') {
+    throw new ApiError('Unexpected GMW coverage mode returned from server.', {
+      code: 'malformed_response',
+    })
   }
 }
 
@@ -330,6 +390,88 @@ export async function submitAoiMapLayers(payload, options = {}) {
       code: 'malformed_response',
     })
   }
+  return body
+}
+
+export async function getGmwLayerOverlay(options = {}) {
+  const { studyArea = 'custom', signal } = options
+  let response
+  try {
+    response = await fetch(buildGmwLayerUrl(studyArea), {
+      method: 'GET',
+      signal,
+    })
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new ApiError('The mangrove layer request was cancelled.', {
+        code: 'request_aborted',
+      })
+    }
+    throw new ApiError(NETWORK_ERROR_MESSAGE, {
+      code: 'network_error',
+      details: error instanceof Error ? error.message : null,
+    })
+  }
+
+  let body = null
+  try {
+    body = await response.json()
+  } catch (error) {
+    throw new ApiError('The mangrove layer service returned a non-JSON response.', {
+      status: response.status,
+      code: 'malformed_response',
+      details: error instanceof Error ? error.message : null,
+    })
+  }
+
+  if (!response.ok) {
+    throw toApiErrorFromResponse(response.status, body)
+  }
+
+  validateGmwLayerResponseShape(body)
+  return body
+}
+
+export async function checkCustomAoiMangroveCoverage(payload, options = {}) {
+  const { signal } = options
+  let response
+  try {
+    response = await fetch(buildGmwCoverageCheckUrl(), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+      signal,
+    })
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new ApiError('The mangrove coverage check was cancelled.', {
+        code: 'request_aborted',
+      })
+    }
+    throw new ApiError(NETWORK_ERROR_MESSAGE, {
+      code: 'network_error',
+      details: error instanceof Error ? error.message : null,
+    })
+  }
+
+  let body = null
+  try {
+    body = await response.json()
+  } catch (error) {
+    throw new ApiError('The mangrove coverage check service returned a non-JSON response.', {
+      status: response.status,
+      code: 'malformed_response',
+      details: error instanceof Error ? error.message : null,
+    })
+  }
+
+  if (!response.ok) {
+    throw toApiErrorFromResponse(response.status, body)
+  }
+
+  validateGmwCoverageCheckResponseShape(body)
   return body
 }
 

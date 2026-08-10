@@ -1001,6 +1001,28 @@ Styling operations (masking/visualization ranges/palettes) do not change scienti
 - No fabricated tiles are returned for no-data AOIs.
 - Numeric AOI analysis results remain visible in the UI if map-layer fetching fails.
 
+### Custom AOI mangrove guidance overlay
+
+The Analysis page now loads a visualization-only GMW guidance overlay as soon as it opens:
+
+- `GET /api/map/gmw-layer`
+  - returns a safe Earth Engine `tile_url_template` for the configured GMW mask
+  - visualization uses semi-transparent green mangrove pixels (default opacity `0.5`)
+  - no Earth Engine credentials are exposed to the browser
+- frontend toggle:
+  - **☑ Show Mangrove Layer** (enabled by default)
+  - toggling the layer does not affect scientific calculations or AOI analysis
+- legend:
+  - **🟩 Mangrove Area (Global Mangrove Watch)**
+
+After a custom polygon is drawn, the frontend performs a visualization check:
+
+- `POST /api/map/gmw-coverage-check`
+- if no mapped mangrove pixels intersect the polygon, the UI shows:
+  - `No mapped mangroves were found inside this polygon. Please draw inside the highlighted green areas.`
+
+This check is guidance-only and does not auto-run analysis or alter GEDI/carbon formulas.
+
 ---
 
 ## Export authoritative AOI analysis results (Module 15)
@@ -1105,12 +1127,18 @@ The PDF is rendered from the same shared model and includes:
 - study-area metadata
 - date range and end-exclusive statement
 - AOI geometry, bounds, and vertex count
+- study area map image (programmatically generated from OSM basemap + GMW layer + AOI boundary)
+- Figure 1 caption describing AOI and GMW overlay context
 - scientific results table with units
 - datasets and processing details
 - methodology
 - assumptions and warnings
 - reproducibility metadata
 - page numbers
+
+If map rendering fails, PDF generation continues and includes:
+
+- `Study area map could not be generated.`
 
 ### Security and response headers
 

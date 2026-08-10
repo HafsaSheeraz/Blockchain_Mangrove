@@ -10,6 +10,7 @@ from fastapi.responses import PlainTextResponse
 
 from app.api.routes.analysis import router as analysis_router
 from app.api.routes.gee import router as gee_router
+from app.api.routes.map import router as map_router
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -129,6 +130,7 @@ def create_app() -> FastAPI:
 
     app.include_router(analysis_router)
     app.include_router(gee_router)
+    app.include_router(map_router)
     return app
 
 
